@@ -14,9 +14,9 @@ EventLogger::EventLogger()
 void EventLogger::log(const String& message) {
     unsigned long timestamp_ = millis();
     time_t now_;
-    time(&now_);  // Get current time
+    time(&now_);
     
-    // Store event in ring buffer
+    // WICHTIG: Zuerst im Buffer speichern (schnell und non-blocking)
     _buffer[_head] = Event(timestamp_, now_, message);
     _head = (_head + 1) % EVENT_BUFFER_SIZE;
     
@@ -24,12 +24,13 @@ void EventLogger::log(const String& message) {
         _count++;
     }
     
-    // Also output to Serial
-    Serial.print(formatTimestamp(timestamp_, now_));
-    Serial.print(" ");
-    Serial.println(message);
+    // Nur wenn Serial verfügbar ist (non-blocking check)
+    if (Serial) {
+        Serial.print(formatTimestamp(timestamp_, now_));
+        Serial.print(" ");
+        Serial.println(message);
+    }
     
-    // Call live callback (for WebSerial)
     if (_liveCallback) {
         _liveCallback(Event(timestamp_, now_, message));
     }
