@@ -41,22 +41,34 @@
 
 class EventLogger {
 public:
+    enum class Status : uint8_t {
+        OK,
+        WARN,
+        INFO,
+        DEBUG,
+        ERROR
+    };
+
     struct Event {
         unsigned long timestamp;
         time_t realTime;  // Real-time clock (Unix timestamp)
+        Status status;
         String message;
 
-        Event() : timestamp(0), realTime(0), message("") {}
-        Event(unsigned long ts, time_t rt, const String& msg) : timestamp(ts), realTime(rt), message(msg) {}
+        Event() : timestamp(0), realTime(0), status(Status::INFO), message("") {}
+        Event(unsigned long ts, time_t rt, const String& msg, Status st = Status::INFO)
+            : timestamp(ts), realTime(rt), status(st), message(msg) {}
     };
 
     EventLogger();
 
-    // Add event
+    // Add event (backward compatible: defaults to INFO)
     void log(const String& message);
+    void log(const String& message, Status status);
 
     // Add event with printf-style formatting
     void logf(const char* format, ...);
+    void logf(Status status, const char* format, ...);
 
     // Get all events from buffer (oldest first)
     std::vector<Event> getEvents() const;
@@ -101,6 +113,8 @@ private:
 
     String formatTimestamp(unsigned long timestamp, time_t realTime) const;
     bool isValidTime(time_t t) const;
+    String formatStatusTag(Status status) const;
+    static const char* statusToText(Status status);
 
     bool processWebCommand(const String& command);
 

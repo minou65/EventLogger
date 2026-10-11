@@ -25,11 +25,15 @@ EventLogger::EventLogger()
 }
 
 void EventLogger::log(const String& message) {
+    log(message, Status::INFO);
+}
+
+void EventLogger::log(const String& message, Status status) {
     unsigned long timestamp_ = millis();
     time_t now_;
     time(&now_);
 
-    Event event_(timestamp_, now_, message);
+    Event event_(timestamp_, now_, message, status);
 
     // First store in buffer
     _buffer[_head] = event_;
@@ -42,6 +46,8 @@ void EventLogger::log(const String& message) {
     // Optional serial output
     if (Serial) {
         Serial.print(formatTimestamp(timestamp_, now_));
+        Serial.print(" ");
+        Serial.print(formatStatusTag(status));
         Serial.print(" ");
         Serial.println(message);
     }
@@ -65,7 +71,18 @@ void EventLogger::logf(const char* format, ...) {
     vsnprintf(buffer_, sizeof(buffer_), format, args_);
     va_end(args_);
 
-    log(String(buffer_));
+    log(String(buffer_), Status::INFO);
+}
+
+void EventLogger::logf(Status status, const char* format, ...) {
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    log(String(buffer_), status);
 }
 
 std::vector<EventLogger::Event> EventLogger::getEvents() const {
@@ -106,7 +123,27 @@ size_t EventLogger::count() const {
 }
 
 String EventLogger::formatEvent(const Event& event) const {
-    return formatTimestamp(event.timestamp, event.realTime) + " " + event.message;
+    return formatTimestamp(event.timestamp, event.realTime) + " " + formatStatusTag(event.status) + " " + event.message;
+}
+
+const char* EventLogger::statusToText(Status status) {
+    switch (status) {
+    case Status::OK:    return "OK";
+    case Status::WARN:  return "WARN";
+    case Status::INFO:  return "INFO";
+    case Status::DEBUG: return "DEBUG";
+    case Status::ERROR: return "ERROR";
+    default:            return "INFO";
+    }
+}
+
+String EventLogger::formatStatusTag(Status status) const {
+    char padded_[6];   // 5 chars + '\0'
+    snprintf(padded_, sizeof(padded_), "%-5s", statusToText(status));  // fixed width text
+
+    char tag_[8];      // "[" + 5 + "]" + '\0'
+    snprintf(tag_, sizeof(tag_), "[%s]", padded_);
+    return String(tag_);
 }
 
 bool EventLogger::isValidTime(time_t t) const {
@@ -320,51 +357,61 @@ void EventLogger::setupWebRoutes() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EventLogger Console</title>
 <style>
-body {
-  font-family: monospace;
-  margin: 0;
-  padding: 0;
-  background: #f5f6f8;
-  color: #1f2328;
-}
+:root { --top-h: 48px; }
+
+body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; }
 
 #top {
+  padding: 10px;
+  border-bottom: 1px solid #ccc;
+  display: flex;
+  gap: 8px;
   position: sticky;
   top: 0;
   z-index: 1000;
-  padding: 10px;
-  background: #ffffff;
-  border-bottom: 1px solid #d0d7de;
-  display: flex;
-  gap: 8px;
+  background: #fff; /* wichtig: nicht transparent */
 }
 
 #cmd {
   flex: 1;
-  background: #ffffff;
-  color: #1f2328;
-  border: 1px solid #8c959f;
+  border: 1px solid #999;
   padding: 8px;
+  font-family: inherit;
+  background: #fff;
+  color: #111;
 }
 
-button {
-  background: #0969da;
-  color: #ffffff;
-  border: 0;
-  padding: 8px 12px;
-  cursor: pointer;
+button { background: #2d6cdf; color: #fff; border: 0; padding: 8px 12px; cursor: pointer; }
+button:hover { background: #2458b8; }
+
+#logWrap { padding: 10px; }
+
+#logTable {
+  width: 100%;
+  border-collapse: separate; /* stabiler für sticky */
+  border-spacing: 0;
+  table-layout: fixed;
 }
 
-button:hover {
-  background: #0550ae;
+#logTable th, #logTable td { border-bottom: 1px solid #ddd; padding: 6px 8px; vertical-align: top; }
+
+#logTable th {
+  position: sticky;
+  top: var(--top-h);   /* dynamisch statt fix 52px */
+  background: #fff;    /* wichtig: nicht transparent */
+  text-align: left;
+  z-index: 900;
 }
 
-#log {
-  white-space: pre-wrap;
-  padding: 10px;
-  margin: 0;
-  line-height: 1.35;
-}
+.col-ts { width: 190px; white-space: nowrap; }
+.col-status { width: 80px; white-space: nowrap; }
+.col-msg { width: auto; word-break: break-word; }
+
+tr.meta td { font-style: italic; opacity: 0.85; border-bottom: 0; }
+tr.status-ok td.col-status { color: #0a7a2f; font-weight: 600; }
+tr.status-warn td.col-status { color: #b26a00; font-weight: 600; }
+tr.status-error td.col-status { color: #b42318; font-weight: 700; }
+tr.status-debug td.col-status { color: #6b7280; }
 </style>
 </head>
 <body>
@@ -373,11 +420,25 @@ button:hover {
   <button onclick="sendCmd()">Senden</button>
   <button onclick="clearLog()">Clear View</button>
 </div>
-<pre id="log"></pre>
+
+<div id="logWrap">
+  <table id="logTable">
+    <thead>
+      <tr>
+        <th class="col-ts">Timestamp</th>
+        <th class="col-status">Status</th>
+        <th class="col-msg">Message</th>
+      </tr>
+    </thead>
+    <tbody id="logBody"></tbody>
+  </table>
+</div>
+
 <script>
 const basePath = window.location.pathname.replace(/\/$/, '');
-const log = document.getElementById('log');
+const logBody = document.getElementById('logBody');
 const cmd = document.getElementById('cmd');
+const topBar = document.getElementById('top');
 let streamWarned = false;
 let autoFollow = true;
 
@@ -390,9 +451,38 @@ window.addEventListener('scroll', () => {
   autoFollow = isNearBottom();
 });
 
-function addLine(line) {
+function updateStickyOffsets() {
+  const h = topBar ? topBar.offsetHeight : 48;
+  document.documentElement.style.setProperty('--top-h', h + 'px');
+}
+
+window.addEventListener('resize', updateStickyOffsets);
+updateStickyOffsets();
+
+function appendRow(ts, status, message, rowClass) {
   const wasNearBottom = isNearBottom();
-  log.textContent += line + "\n";
+
+  const tr = document.createElement('tr');
+  if (rowClass) {
+    tr.className = rowClass;
+  }
+
+  const tdTs = document.createElement('td');
+  tdTs.className = 'col-ts';
+  tdTs.textContent = ts || '';
+
+  const tdStatus = document.createElement('td');
+  tdStatus.className = 'col-status';
+  tdStatus.textContent = status || '';
+
+  const tdMsg = document.createElement('td');
+  tdMsg.className = 'col-msg';
+  tdMsg.textContent = message || '';
+
+  tr.appendChild(tdTs);
+  tr.appendChild(tdStatus);
+  tr.appendChild(tdMsg);
+  logBody.appendChild(tr);
 
   if (autoFollow || wasNearBottom) {
     window.scrollTo(0, document.body.scrollHeight);
@@ -400,8 +490,31 @@ function addLine(line) {
   }
 }
 
+function parseAndAddLine(line) {
+  const m = line.match(/^\[(.*?)\]\s+\[([A-Z ]{5})\]\s+(.*)$/);
+  if (m) {
+    const ts = m[1];
+    const status = m[2].trim();
+    const msg = m[3];
+
+    let rowClass = '';
+    if (status === 'OK') rowClass = 'status-ok';
+    else if (status === 'WARN') rowClass = 'status-warn';
+    else if (status === 'ERROR') rowClass = 'status-error';
+    else if (status === 'DEBUG') rowClass = 'status-debug';
+
+    appendRow(ts, status, msg, rowClass);
+  } else {
+    appendRow('', '', line, 'meta');
+  }
+}
+
+function addMetaLine(line) {
+  appendRow('', '', line, 'meta');
+}
+
 function clearLog() {
-  log.textContent = "";
+  logBody.innerHTML = '';
   autoFollow = true;
 }
 
@@ -418,9 +531,9 @@ async function loadHistory() {
   const arr = JSON.parse(text);
 
   for (const line of arr) {
-    addLine(line);
+    parseAndAddLine(line);
   }
-  addLine('=== Live Events ===');
+  addMetaLine('=== Live Events ===');
 }
 
 async function sendCmd() {
@@ -436,7 +549,7 @@ async function sendCmd() {
 
   if (!r.ok) {
     const t = await r.text();
-    addLine('[command failed] HTTP ' + r.status + ' :: ' + t.substring(0, 120));
+    addMetaLine('[command failed] HTTP ' + r.status + ' :: ' + t.substring(0, 120));
   }
 
   cmd.value = '';
@@ -455,16 +568,16 @@ es.onopen = () => {
   streamWarned = false;
 };
 
-es.addEventListener('log', (e) => addLine(e.data));
+es.addEventListener('log', (e) => parseAndAddLine(e.data));
 
 es.onerror = () => {
   if (!streamWarned) {
-    addLine('[stream disconnected] ' + streamUrl);
+    addMetaLine('[stream disconnected] ' + streamUrl);
     streamWarned = true;
   }
 };
 
-loadHistory().catch((e) => addLine('[history failed] ' + e.message));
+loadHistory().catch((e) => addMetaLine('[history failed] ' + e.message));
 </script>
 </body>
 </html>
