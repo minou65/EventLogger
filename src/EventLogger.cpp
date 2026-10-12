@@ -416,8 +416,9 @@ tr.status-debug td.col-status { color: #6b7280; }
 </head>
 <body>
 <div id="top">
-  <input id="cmd" type="text" placeholder="Befehl eingeben (z.B. help)">
-  <button onclick="sendCmd()">Senden</button>
+  <button id="backBtn" onclick="goBack()" style="display:none;">Back</button>
+  <input id="cmd" type="text" placeholder="Enter command (e.g. help)">
+  <button onclick="sendCmd()">Send</button>
   <button onclick="clearLog()">Clear View</button>
 </div>
 
@@ -437,10 +438,44 @@ tr.status-debug td.col-status { color: #6b7280; }
 <script>
 const basePath = window.location.pathname.replace(/\/$/, '');
 const logBody = document.getElementById('logBody');
+if (!logBody) {
+  throw new Error('Missing #logBody element');
+}
 const cmd = document.getElementById('cmd');
 const topBar = document.getElementById('top');
+const backBtn = document.getElementById('backBtn');
 let streamWarned = false;
 let autoFollow = true;
+
+function isStandaloneMode() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+         (window.navigator.standalone === true);
+}
+
+function canNavigateBack() {
+  return window.history.length > 1;
+}
+
+function updateBackButtonVisibility() {
+  const shouldShow = isStandaloneMode() || canNavigateBack();
+  if (backBtn) {
+    backBtn.style.display = shouldShow ? '' : 'none';
+  }
+}
+
+function goBack() {
+  if (canNavigateBack()) {
+    window.history.back();
+    return;
+  }
+
+  const rootUrl = basePath.replace(/\/events$/, '') || '/';
+  window.location.replace(rootUrl);
+}
+
+updateBackButtonVisibility();
+window.addEventListener('pageshow', updateBackButtonVisibility);
+window.addEventListener('popstate', updateBackButtonVisibility);
 
 function isNearBottom() {
   const threshold = 24;
