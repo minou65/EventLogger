@@ -36,12 +36,13 @@ void EventLogger::log(const String& message, Status status) {
     Event event_(timestamp_, now_, message, status);
 
     // First store in buffer
+    portENTER_CRITICAL(&_bufferMux);
     _buffer[_head] = event_;
     _head = (_head + 1) % EVENT_BUFFER_SIZE;
-
     if (_count < EVENT_BUFFER_SIZE) {
         _count++;
     }
+    portEXIT_CRITICAL(&_bufferMux);
 
     // Optional serial output
     if (Serial) {
@@ -282,22 +283,28 @@ bool EventLogger::beginWeb(AsyncWebServer* server, const String& basePath) {
 void EventLogger::setupWebRoutes() {
     // 1) Spezifische Endpunkte zuerst
     _webServer->on(_webHistoryPath.c_str(), HTTP_GET, [this](AsyncWebServerRequest* request) {
-        AsyncResponseStream* response_ = request->beginResponseStream("application/json; charset=UTF-8");
-        response_->print("[");
+        String json_;
+        json_.reserve(_count * 48 + 8); // grobe Schätzung, vermeidet mehrfaches Reallozieren
 
-        auto events_ = getEvents();
-        for (size_t i_ = 0; i_ < events_.size(); i_++) {
-            if (i_ > 0) {
-                response_->print(",");
+        json_ += "[";
+
+        if (_count > 0) {
+            size_t start_ = (_count < EVENT_BUFFER_SIZE) ? 0 : _head;
+
+            for (size_t i_ = 0; i_ < _count; i_++) {
+                if (i_ > 0) {
+                    json_ += ",";
+                }
+
+                size_t index_ = (start_ + i_) % EVENT_BUFFER_SIZE;
+                json_ += "\"";
+                json_ += escapeJson(formatEvent(_buffer[index_]));
+                json_ += "\"";
             }
-
-            response_->print("\"");
-            response_->print(escapeJson(formatEvent(events_[i_])));
-            response_->print("\"");
         }
 
-        response_->print("]");
-        request->send(response_);
+        json_ += "]";
+        request->send(200, "application/json; charset=UTF-8", json_);
     });
 
     _webServer->on(

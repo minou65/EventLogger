@@ -53,11 +53,16 @@ public:
         unsigned long timestamp;
         time_t realTime;  // Real-time clock (Unix timestamp)
         Status status;
-        String message;
+        char message[96]; // Feste Größe statt String -> keine Heap-Allokation mehr
 
-        Event() : timestamp(0), realTime(0), status(Status::INFO), message("") {}
+        Event() : timestamp(0), realTime(0), status(Status::INFO) {
+            message[0] = '\0';
+        }
         Event(unsigned long ts, time_t rt, const String& msg, Status st = Status::INFO)
-            : timestamp(ts), realTime(rt), status(st), message(msg) {}
+            : timestamp(ts), realTime(rt), status(st) {
+            strncpy(message, msg.c_str(), sizeof(message) - 1);
+            message[sizeof(message) - 1] = '\0';
+        }
     };
 
     EventLogger();
@@ -106,8 +111,10 @@ public:
 
 private:
     Event _buffer[EVENT_BUFFER_SIZE];
-    size_t _head;           // Position for next element
-    size_t _count;          // Number of stored events
+    size_t _head;
+    size_t _count;
+    mutable portMUX_TYPE _bufferMux = portMUX_INITIALIZER_UNLOCKED;
+
     std::function<void(const Event&)> _liveCallback;
     std::function<void(const String&)> _commandCallback;
 
