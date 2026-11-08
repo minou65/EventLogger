@@ -109,9 +109,24 @@ The command callback runs synchronously. Incoming commands are trimmed and also 
 ```cpp
 void log(const String& message);
 void logf(const char* format, ...);
+void logf(Status status, const char* format, ...);
+void logf(Status status, uint8_t indent, const char* format, ...);
 ```
 
-`logf()` uses the same formatting rules as `printf` and stores a maximum of 255 formatted characters per call.
+`logf()` uses the same formatting rules as `printf`. The first overload logs with `INFO` status and indentation level `0`; the other overloads let you specify a status and, optionally, an indentation level. Formatted messages are stored as events and are limited to 95 characters; longer messages are truncated.
+
+#### Indentation levels
+
+Pass a status and indentation level to create hierarchical log output. Levels range from `0` (no indentation) to `4`; each level adds two spaces before the message. Values above `4` are capped at the maximum level.
+
+```cpp
+eventLogger.log("Network", EventLogger::Status::INFO, 0);
+eventLogger.log("Connecting to Wi-Fi", EventLogger::Status::DEBUG, 1);
+eventLogger.log("Connection failed", EventLogger::Status::WARN, 2);
+eventLogger.logf(EventLogger::Status::INFO, 1, "Retry %d", 3);
+```
+
+The indentation is retained in each event and appears in serial output and in `formatEvent()` output. The `webPrint()` and `webPrintln()` methods accept the same status and indentation arguments; `webPrintf()` also supports a status and indentation level.
 
 ### Reading and clearing events
 
@@ -127,9 +142,11 @@ Each event contains:
 
 ```cpp
 struct Event {
-    unsigned long timestamp; // milliseconds since boot
-    time_t realTime;         // Unix timestamp, when available
-    String message;
+    unsigned long timestamp;
+    time_t realTime;
+    Status status;
+    uint8_t indent;
+    char message[96];
 };
 ```
 
@@ -165,11 +182,16 @@ void clearCommandCallback();
 void webPrint(const String& message);
 void webPrintln(const String& message);
 void webPrintln();
+void webPrintf(const char* format, ...);
+void webPrintf(Status status, const char* format, ...);
+void webPrintf(Status status, uint8_t indent, const char* format, ...);
 size_t webClientCount() const;
 void loop();
 ```
 
 `beginWeb()` returns `false` if the server pointer is null or async web support is unavailable. `loop()` is currently a no-op, retained for API compatibility.
+
+`webPrintf()` uses the same formatting rules as `printf`. Its overloads default to `INFO` status and indentation level `0`, or accept an explicit status and indentation level. Formatted output is limited to 255 characters per call. Like `webPrint()` and `webPrintln()`, it streams to connected browser clients and does not add an event to the logger buffer.
 
 For sketches using the familiar WebSerial-style interface, include the compatibility header:
 
