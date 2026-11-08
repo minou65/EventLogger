@@ -206,22 +206,50 @@ bool EventLogger::processWebCommand(const String& command) {
     return false;
 }
 
-void EventLogger::webPrint(const String& message) {
+void EventLogger::webPrint(const String& message, Status status) {
 #if EVENTLOGGER_HAS_ASYNC_WEB
     if (_webInitialized) {
-        broadcastWebLine(message);
+        unsigned long timestamp_ = millis();
+        time_t now_;
+        time(&now_);
+
+        String line_ = formatTimestamp(timestamp_, now_) + " " + formatStatusTag(status) + " " + message;
+        broadcastWebLine(line_);
     }
 #else
     (void)message;
+    (void)status;
 #endif
 }
 
-void EventLogger::webPrintln(const String& message) {
-    webPrint(message);
+void EventLogger::webPrintln(const String& message, Status status) {
+    webPrint(message, status);
 }
 
 void EventLogger::webPrintln() {
     webPrint("");
+}
+
+void EventLogger::webPrintf(const char* format, ...) {
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    webPrint(String(buffer_));
+}
+
+void EventLogger::webPrintf(Status status, const char* format, ...) {
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    webPrint(String(buffer_), status);
 }
 
 size_t EventLogger::webClientCount() const {
