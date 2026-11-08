@@ -1,12 +1,10 @@
-// EventLogger.h
-
 #ifndef _EVENTLOGGER_h
 #define _EVENTLOGGER_h
 
 #if defined(ARDUINO) && ARDUINO >= 100
-    #include "arduino.h"
+#include "arduino.h"
 #else
-    #include "WProgram.h"
+#include "WProgram.h"
 #endif
 
 #include <vector>
@@ -15,28 +13,28 @@
 
 // Configurable buffer size - can be overridden by user
 #ifndef EVENT_BUFFER_SIZE
-    #define EVENT_BUFFER_SIZE 100  // Default: Number of events in ring buffer
+#define EVENT_BUFFER_SIZE 100  // Default: Number of events in ring buffer
 #endif
 
 // Async Web support detection (optional dependency)
 #ifndef EVENTLOGGER_HAS_ASYNC_WEB
-    #if defined(ESP32) && defined(__has_include)
-        #if __has_include(<ESPAsyncWebServer.h>)
-            #define EVENTLOGGER_HAS_ASYNC_WEB 1
-        #else
-            #define EVENTLOGGER_HAS_ASYNC_WEB 0
-        #endif
-    #else
-        #define EVENTLOGGER_HAS_ASYNC_WEB 0
-    #endif
+#if defined(ESP32) && defined(__has_include)
+#if __has_include(<ESPAsyncWebServer.h>)
+#define EVENTLOGGER_HAS_ASYNC_WEB 1
+#else
+#define EVENTLOGGER_HAS_ASYNC_WEB 0
+#endif
+#else
+#define EVENTLOGGER_HAS_ASYNC_WEB 0
+#endif
 #endif
 
 #if EVENTLOGGER_HAS_ASYNC_WEB
-    #include <ESPAsyncWebServer.h>
+#include <ESPAsyncWebServer.h>
 #else
-    class AsyncWebServer;
-    class AsyncWebServerRequest;
-    class AsyncEventSource;
+class AsyncWebServer;
+class AsyncWebServerRequest;
+class AsyncEventSource;
 #endif
 
 class EventLogger {
@@ -49,17 +47,21 @@ public:
         ERROR
     };
 
+    // Maximum supported indentation level for hierarchical logs
+    static const uint8_t MAX_INDENT_LEVEL = 4;
+
     struct Event {
         unsigned long timestamp;
         time_t realTime;  // Real-time clock (Unix timestamp)
         Status status;
+        uint8_t indent;   // Indentation level (0-4) for hierarchical logs
         char message[96]; // Feste Größe statt String -> keine Heap-Allokation mehr
 
-        Event() : timestamp(0), realTime(0), status(Status::INFO) {
+        Event() : timestamp(0), realTime(0), status(Status::INFO), indent(0) {
             message[0] = '\0';
         }
-        Event(unsigned long ts, time_t rt, const String& msg, Status st = Status::INFO)
-            : timestamp(ts), realTime(rt), status(st) {
+        Event(unsigned long ts, time_t rt, const String& msg, Status st = Status::INFO, uint8_t ind = 0)
+            : timestamp(ts), realTime(rt), status(st), indent(ind) {
             strncpy(message, msg.c_str(), sizeof(message) - 1);
             message[sizeof(message) - 1] = '\0';
         }
@@ -70,10 +72,12 @@ public:
     // Add event (backward compatible: defaults to INFO)
     void log(const String& message);
     void log(const String& message, Status status);
+    void log(const String& message, Status status, uint8_t indent);
 
     // Add event with printf-style formatting
     void logf(const char* format, ...);
     void logf(Status status, const char* format, ...);
+    void logf(Status status, uint8_t indent, const char* format, ...);
 
     // Get all events from buffer (oldest first)
     std::vector<Event> getEvents() const;
@@ -102,11 +106,12 @@ public:
     void clearCommandCallback();
 
     // Outgoing text stream (Web console output, not persisted to event buffer)
-    void webPrint(const String& message, Status status = Status::INFO);
-    void webPrintln(const String& message, Status status = Status::INFO);
+    void webPrint(const String& message, Status status = Status::INFO, uint8_t indent = 0);
+    void webPrintln(const String& message, Status status = Status::INFO, uint8_t indent = 0);
     void webPrintln();
     void webPrintf(const char* format, ...);
     void webPrintf(Status status, const char* format, ...);
+    void webPrintf(Status status, uint8_t indent, const char* format, ...);
 
     // Connected stream clients
     size_t webClientCount() const;
@@ -124,6 +129,7 @@ private:
     bool isValidTime(time_t t) const;
     String formatStatusTag(Status status) const;
     static const char* statusToText(Status status);
+    static String indentToSpaces(uint8_t indent);
 
     bool processWebCommand(const String& command);
 

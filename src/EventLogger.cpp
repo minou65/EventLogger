@@ -25,15 +25,23 @@ EventLogger::EventLogger()
 }
 
 void EventLogger::log(const String& message) {
-    log(message, Status::INFO);
+    log(message, Status::INFO, 0);
 }
 
 void EventLogger::log(const String& message, Status status) {
+    log(message, status, 0);
+}
+
+void EventLogger::log(const String& message, Status status, uint8_t indent) {
+    if (indent > MAX_INDENT_LEVEL) {
+        indent = MAX_INDENT_LEVEL;
+    }
+
     unsigned long timestamp_ = millis();
     time_t now_;
     time(&now_);
 
-    Event event_(timestamp_, now_, message, status);
+    Event event_(timestamp_, now_, message, status, indent);
 
     // First store in buffer
     portENTER_CRITICAL(&_bufferMux);
@@ -50,6 +58,7 @@ void EventLogger::log(const String& message, Status status) {
         Serial.print(" ");
         Serial.print(formatStatusTag(status));
         Serial.print(" ");
+        Serial.print(indentToSpaces(indent));
         Serial.println(message);
     }
 
@@ -84,6 +93,17 @@ void EventLogger::logf(Status status, const char* format, ...) {
     va_end(args_);
 
     log(String(buffer_), status);
+}
+
+void EventLogger::logf(Status status, uint8_t indent, const char* format, ...) {
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    log(String(buffer_), status, indent);
 }
 
 std::vector<EventLogger::Event> EventLogger::getEvents() const {
@@ -124,7 +144,7 @@ size_t EventLogger::count() const {
 }
 
 String EventLogger::formatEvent(const Event& event) const {
-    return formatTimestamp(event.timestamp, event.realTime) + " " + formatStatusTag(event.status) + " " + event.message;
+    return formatTimestamp(event.timestamp, event.realTime) + " " + formatStatusTag(event.status) + " " + indentToSpaces(event.indent) + event.message;
 }
 
 const char* EventLogger::statusToText(Status status) {
@@ -145,6 +165,18 @@ String EventLogger::formatStatusTag(Status status) const {
     char tag_[8];      // "[" + 5 + "]" + '\0'
     snprintf(tag_, sizeof(tag_), "[%s]", padded_);
     return String(tag_);
+}
+
+String EventLogger::indentToSpaces(uint8_t indent) {
+    if (indent > MAX_INDENT_LEVEL) {
+        indent = MAX_INDENT_LEVEL;
+    }
+
+    char buffer_[MAX_INDENT_LEVEL * 2 + 1];
+    uint8_t spaces_ = indent * 2;
+    memset(buffer_, ' ', spaces_);
+    buffer_[spaces_] = '\0';
+    return String(buffer_);
 }
 
 bool EventLogger::isValidTime(time_t t) const {
@@ -206,24 +238,25 @@ bool EventLogger::processWebCommand(const String& command) {
     return false;
 }
 
-void EventLogger::webPrint(const String& message, Status status) {
+void EventLogger::webPrint(const String& message, Status status, uint8_t indent) {
 #if EVENTLOGGER_HAS_ASYNC_WEB
     if (_webInitialized) {
         unsigned long timestamp_ = millis();
         time_t now_;
         time(&now_);
 
-        String line_ = formatTimestamp(timestamp_, now_) + " " + formatStatusTag(status) + " " + message;
+        String line_ = formatTimestamp(timestamp_, now_) + " " + formatStatusTag(status) + " " + indentToSpaces(indent) + message;
         broadcastWebLine(line_);
     }
 #else
     (void)message;
     (void)status;
+    (void)indent;
 #endif
 }
 
-void EventLogger::webPrintln(const String& message, Status status) {
-    webPrint(message, status);
+void EventLogger::webPrintln(const String& message, Status status, uint8_t indent) {
+    webPrint(message, status, indent);
 }
 
 void EventLogger::webPrintln() {
@@ -250,6 +283,17 @@ void EventLogger::webPrintf(Status status, const char* format, ...) {
     va_end(args_);
 
     webPrint(String(buffer_), status);
+}
+
+void EventLogger::webPrintf(Status status, uint8_t indent, const char* format, ...) {
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    webPrint(String(buffer_), status, indent);
 }
 
 size_t EventLogger::webClientCount() const {
@@ -440,7 +484,7 @@ button:hover { background: #2458b8; }
 
 .col-ts { width: 190px; white-space: nowrap; }
 .col-status { width: 80px; white-space: nowrap; }
-.col-msg { width: auto; word-break: break-word; }
+.col-msg { width: auto; word-break: break-word; white-space: pre-wrap; }
 
 tr.meta td { font-style: italic; opacity: 0.85; border-bottom: 0; }
 tr.status-ok td.col-status { color: #0a7a2f; font-weight: 600; }
@@ -561,7 +605,7 @@ function appendRow(ts, status, message, rowClass) {
 }
 
 function parseAndAddLine(line) {
-  const m = line.match(/^\[(.*?)\]\s+\[([A-Z ]{5})\]\s+(.*)$/);
+  const m = line.match(/^\[(.*?)\]\s\[([A-Z ]{5})\]\s(.*)$/);
   if (m) {
     const ts = m[1];
     const status = m[2].trim();
