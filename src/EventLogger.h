@@ -102,9 +102,11 @@ public:
     void clearCommandCallback();
 
     // Outgoing text stream (Web console output, not persisted to event buffer)
-    void webPrint(const String& message);
-    void webPrintln(const String& message);
+    void webPrint(const String& message, Status status = Status::INFO);
+    void webPrintln(const String& message, Status status = Status::INFO);
     void webPrintln();
+    void webPrintf(const char* format, ...);
+    void webPrintf(Status status, const char* format, ...);
 
     // Connected stream clients
     size_t webClientCount() const;
