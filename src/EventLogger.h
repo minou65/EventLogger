@@ -55,7 +55,7 @@ public:
         time_t realTime;  // Real-time clock (Unix timestamp)
         Status status;
         uint8_t indent;   // Indentation level (0-4) for hierarchical logs
-        char message[96]; // Feste Größe statt String -> keine Heap-Allokation mehr
+        char message[96]; // Feste Grï¿½ï¿½e statt String -> keine Heap-Allokation mehr
 
         Event() : timestamp(0), realTime(0), status(Status::INFO), indent(0) {
             message[0] = '\0';
@@ -152,5 +152,117 @@ private:
 
 // Global instance
 extern EventLogger eventLogger;
+
+// -----------------------------------------------------------------------
+// Logging convenience macros
+// -----------------------------------------------------------------------
+// Provide short, consistent macros for the most common log levels.
+// Internally these forward to the existing EventLogger::logf() overloads.
+//
+// Example:
+//   LOG_OK("Initialization complete");
+//   LOG_INFO("WiFi connected");
+//   LOG_WARN("Low RSSI: %d", rssi);
+//   LOG_ERROR("Connection lost");
+//   LOG_DEBUG("Packet received: %u bytes", len);
+#ifndef LOG_OK
+#define LOG_OK(format, ...)    eventLogger.logf(EventLogger::Status::OK,    format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_INFO
+#define LOG_INFO(format, ...)  eventLogger.logf(EventLogger::Status::INFO,  format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_WARN
+#define LOG_WARN(format, ...)  eventLogger.logf(EventLogger::Status::WARN,  format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_ERROR
+#define LOG_ERROR(format, ...) eventLogger.logf(EventLogger::Status::ERROR, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_DEBUG
+#define LOG_DEBUG(format, ...) eventLogger.logf(EventLogger::Status::DEBUG, format, ##__VA_ARGS__)
+#endif
+
+// -----------------------------------------------------------------------
+// Logging convenience macros with explicit indent level
+// -----------------------------------------------------------------------
+// Indentation levels range from 0 to EventLogger::MAX_INDENT_LEVEL.
+#ifndef LOG_OK_AT
+#define LOG_OK_AT(indent, format, ...)    eventLogger.logf(EventLogger::Status::OK,    indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_INFO_AT
+#define LOG_INFO_AT(indent, format, ...)  eventLogger.logf(EventLogger::Status::INFO,  indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_WARN_AT
+#define LOG_WARN_AT(indent, format, ...)  eventLogger.logf(EventLogger::Status::WARN,  indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_ERROR_AT
+#define LOG_ERROR_AT(indent, format, ...) eventLogger.logf(EventLogger::Status::ERROR, indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOG_DEBUG_AT
+#define LOG_DEBUG_AT(indent, format, ...) eventLogger.logf(EventLogger::Status::DEBUG, indent, format, ##__VA_ARGS__)
+#endif
+
+// -----------------------------------------------------------------------
+// Web print convenience macros
+// -----------------------------------------------------------------------
+// Same idea as LOG_* macros, but for the outgoing web stream (webPrintf),
+// which is not persisted to the event buffer.
+//
+// Example:
+//   WEB_LOG_OK("Initialization complete");
+//   WEB_LOG_INFO("WiFi connected");
+//   WEB_LOG_WARN("Low RSSI: %d", rssi);
+//   WEB_LOG_ERROR("Connection lost");
+//   WEB_LOG_DEBUG("Packet received: %u bytes", len);
+#ifndef WEB_LOG_OK
+#define WEB_LOG_OK(format, ...)    eventLogger.webPrintf(EventLogger::Status::OK,    format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_INFO
+#define WEB_LOG_INFO(format, ...)  eventLogger.webPrintf(EventLogger::Status::INFO,  format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_WARN
+#define WEB_LOG_WARN(format, ...)  eventLogger.webPrintf(EventLogger::Status::WARN,  format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_ERROR
+#define WEB_LOG_ERROR(format, ...) eventLogger.webPrintf(EventLogger::Status::ERROR, format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_DEBUG
+#define WEB_LOG_DEBUG(format, ...) eventLogger.webPrintf(EventLogger::Status::DEBUG, format, ##__VA_ARGS__)
+#endif
+
+// -----------------------------------------------------------------------
+// Web print convenience macros with explicit indent level
+// -----------------------------------------------------------------------
+// Indentation levels range from 0 to EventLogger::MAX_INDENT_LEVEL.
+#ifndef WEB_LOG_OK_AT
+#define WEB_LOG_OK_AT(indent, format, ...)    eventLogger.webPrintf(EventLogger::Status::OK,    indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_INFO_AT
+#define WEB_LOG_INFO_AT(indent, format, ...)  eventLogger.webPrintf(EventLogger::Status::INFO,  indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_WARN_AT
+#define WEB_LOG_WARN_AT(indent, format, ...)  eventLogger.webPrintf(EventLogger::Status::WARN,  indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_ERROR_AT
+#define WEB_LOG_ERROR_AT(indent, format, ...) eventLogger.webPrintf(EventLogger::Status::ERROR, indent, format, ##__VA_ARGS__)
+#endif
+
+#ifndef WEB_LOG_DEBUG_AT
+#define WEB_LOG_DEBUG_AT(indent, format, ...) eventLogger.webPrintf(EventLogger::Status::DEBUG, indent, format, ##__VA_ARGS__)
+#endif
 
 #endif
