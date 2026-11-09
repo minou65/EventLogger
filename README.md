@@ -11,6 +11,7 @@ A lightweight event logger for Arduino projects. `EventLogger` stores recent eve
 - `printf`-style formatted logging
 - Optional live callback for WebSerial or other integrations
 - Optional ESP32 web console with event history, live updates, and incoming commands
+- Optional ESP32 heap monitor with low-memory and fragmentation warnings
 - Optional WebSerial-compatible wrapper for existing sketches
 - Global `eventLogger` instance included by the library
 
@@ -128,6 +129,23 @@ eventLogger.logf(EventLogger::Status::INFO, 1, "Retry %d", 3);
 
 The indentation is retained in each event and appears in serial output and in `formatEvent()` output. The `webPrint()` and `webPrintln()` methods accept the same status and indentation arguments; `webPrintf()` also supports a status and indentation level.
 
+#### Convenience macros
+
+The `LOG_OK`, `LOG_INFO`, `LOG_WARN`, `LOG_ERROR`, and `LOG_DEBUG` macros provide shorthand for buffered logging. Add `_AT` to specify an indentation level explicitly:
+
+```cpp
+LOG_INFO("Starting connection");
+LOG_INFO_AT(1, "Connecting to Wi-Fi");
+LOG_WARN_AT(2, "Retry %d", retryCount);
+```
+
+The matching `WEB_LOG_*` and `WEB_LOG_*_AT` macros stream output to connected web clients without adding events to the buffer:
+
+```cpp
+WEB_LOG_INFO("Wi-Fi connected");
+WEB_LOG_WARN_AT(1, "Signal strength: %d", rssi);
+```
+
 ### Reading and clearing events
 
 ```cpp
@@ -236,6 +254,34 @@ The buffer is statically allocated, so increasing its size increases RAM usage. 
 
 The logger always records `millis()`. It also calls `time()` and stores the returned Unix timestamp. To receive calendar timestamps, initialize the system clock through the facilities provided by your board or networking/time library. If the clock is not valid, formatted output automatically falls back to elapsed time since boot.
 
+## ESP32 heap monitor
+
+`HeapMonitor` is an optional ESP32 utility. Include its header and call `beginHeapMonitor()` once after startup, then call `loopHeapMonitor()` regularly from `loop()`:
+
+```cpp
+#include <Arduino.h>
+#include <EventLogger.h>
+#include <HeapMonitor.h>
+
+void setup() {
+    Serial.begin(115200);
+    beginHeapMonitor();
+}
+
+void loop() {
+    loopHeapMonitor();
+}
+```
+
+`beginHeapMonitor()` logs the free heap and largest free block at boot. `loopHeapMonitor()` checks for low free heap and excessive fragmentation, logging `WARN` events when thresholds are crossed. The defaults are 40,000 bytes for free heap and 50% fragmentation. Repeated warnings for the same condition are limited to one every 10 minutes while it persists.
+
+Set custom warning thresholds in bytes and percent with `setHeapWarningThresholds(freeHeapBytes, fragmentationPercent)`. Call `printHeapReport()` at any time for a detailed report containing uptime, free and minimum free heap, largest block, fragmentation, and change since boot. The detailed lines are sent to connected web-console clients; a compact summary is also added to the event buffer. `loopHeapMonitor()` additionally prints this report once per day at midnight when the system clock has been synchronized.
+
+```cpp
+setHeapWarningThresholds(30000, 60);
+printHeapReport();
+```
+
 ## Repository structure
 
 ```text
@@ -244,6 +290,8 @@ src/
   EventLogger.cpp
     EventLoggerWebSerialCompat.h
     EventLoggerWebSerialCompat.cpp
+    HeapMonitor.h
+    HeapMonitor.cpp
 library.properties
 ```
 
