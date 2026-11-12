@@ -34,13 +34,31 @@ static unsigned long _bootMillis = 0;
 #define HEAPMONITOR_WARNING_CACHE_INTERVAL_MS (60UL * 60UL * 1000UL)
 #endif
 
+// A threshold must be exceeded continuously for this long before a warning
+// is emitted, so short allocation spikes (e.g. a web request) are ignored.
+#ifndef HEAPMONITOR_WARNING_SUSTAIN_MS
+#define HEAPMONITOR_WARNING_SUSTAIN_MS (30UL * 1000UL)
+#endif
+
+// Interval between heap samples taken by checkHeapWarnings().
+#ifndef HEAPMONITOR_SAMPLE_INTERVAL_MS
+#define HEAPMONITOR_SAMPLE_INTERVAL_MS 1000UL
+#endif
+
 static uint32_t _freeHeapWarnThreshold = HEAPMONITOR_DEFAULT_FREE_HEAP_WARN_BYTES;
 static uint8_t _fragmentationWarnThreshold = HEAPMONITOR_DEFAULT_FRAGMENTATION_WARN_PERCENT;
 
-static unsigned long _lastFreeHeapStreamWarnMillis = 0;
-static unsigned long _lastFreeHeapCacheWarnMillis = 0;
-static unsigned long _lastFragmentationStreamWarnMillis = 0;
-static unsigned long _lastFragmentationCacheWarnMillis = 0;
+struct HeapWarningState {
+    bool active;
+    unsigned long activeSinceMillis;
+    unsigned long lastStreamWarnMillis;
+    unsigned long lastCacheWarnMillis;
+    uint32_t worstValue;
+};
+
+static HeapWarningState _freeHeapWarning = {};
+static HeapWarningState _fragmentationWarning = {};
+static unsigned long _lastSampleMillis = 0;
 
 void setHeapWarningThresholds(uint32_t freeHeapBytes_, uint8_t fragmentationPercent_) {
     _freeHeapWarnThreshold = freeHeapBytes_;
@@ -87,9 +105,13 @@ static uint8_t computeHeapMetrics(uint32_t& freeHeap_, uint32_t& minFreeHeap_, u
     largestBlock_ = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
     deltaSinceBoot_ = (int32_t)freeHeap_ - (int32_t)_bootFreeHeap;
 
+    // ESP.getFreeHeap() counts MALLOC_CAP_INTERNAL memory, so use the free size
+    // of the same capability as largestBlock_ to get a consistent ratio.
+    uint32_t free8Bit_ = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+
     uint8_t fragmentation_ = 0;
-    if (freeHeap_ > 0) {
-        fragmentation_ = (uint8_t)(100 - (uint32_t)((uint64_t)largestBlock_ * 100 / freeHeap_));
+    if (free8Bit_ > 0 && largestBlock_ < free8Bit_) {
+        fragmentation_ = (uint8_t)(100 - (uint32_t)((uint64_t)largestBlock_ * 100 / free8Bit_));
     }
     return fragmentation_;
 }
@@ -139,66 +161,94 @@ void checkFreeHeapAtMidnight() {
     }
 }
 
+// Tracks how long a condition has been exceeded and its worst value since the
+// last warning. Returns true when a warning is due on the stream.
+static bool updateHeapWarning(HeapWarningState& state_, bool exceeded_, uint32_t value_, bool higherIsWorse_, unsigned long now_) {
+    if (!exceeded_) {
+        state_.active = false;
+        return false;
+    }
+
+    if (!state_.active) {
+        state_.active = true;
+        state_.activeSinceMillis = now_;
+        state_.worstValue = value_;
+    }
+    else if (higherIsWorse_ ? (value_ > state_.worstValue) : (value_ < state_.worstValue)) {
+        state_.worstValue = value_;
+    }
+
+    if (now_ - state_.activeSinceMillis < HEAPMONITOR_WARNING_SUSTAIN_MS) {
+        return false;
+    }
+
+    return (state_.lastStreamWarnMillis == 0) ||
+        (now_ - state_.lastStreamWarnMillis) >= HEAPMONITOR_WARNING_STREAM_INTERVAL_MS;
+}
+
+// Writes the warning to the stream, persists it to the event cache when the
+// cache interval has elapsed, and restarts worst-value tracking.
+static void emitHeapWarning(HeapWarningState& state_, const char* message_, uint32_t currentValue_, unsigned long now_) {
+    state_.lastStreamWarnMillis = now_;
+
+    bool cacheDue_ = (state_.lastCacheWarnMillis == 0) ||
+        (now_ - state_.lastCacheWarnMillis) >= HEAPMONITOR_WARNING_CACHE_INTERVAL_MS;
+
+    if (cacheDue_) {
+        state_.lastCacheWarnMillis = now_;
+        eventLogger.log(message_, EventLogger::Status::WARN);
+    }
+    else {
+        eventLogger.webPrintln(message_, EventLogger::Status::WARN);
+    }
+
+    state_.worstValue = currentValue_;
+}
+
 // Checks the free heap and fragmentation against the configured thresholds.
-// Warnings are written to the stream (webPrintln) at most once per
-// HEAPMONITOR_WARNING_STREAM_INTERVAL_MS, and persisted to the event cache
-// at most once per HEAPMONITOR_WARNING_CACHE_INTERVAL_MS, to avoid flooding
-// either output while a condition persists. Warnings are suppressed during
-// the startup grace period, since boot-time allocation churn (WiFi, TLS,
-// NTP, web server init) can temporarily look like high fragmentation.
+// The heap is sampled every HEAPMONITOR_SAMPLE_INTERVAL_MS and a warning is
+// only raised once a threshold has been exceeded continuously for
+// HEAPMONITOR_WARNING_SUSTAIN_MS, so short allocation spikes are ignored.
+// Warnings report the current value, how long the condition has lasted and
+// the worst value seen since the previous warning. They are written to the
+// stream (webPrintln) at most once per HEAPMONITOR_WARNING_STREAM_INTERVAL_MS
+// and persisted to the event cache at most once per
+// HEAPMONITOR_WARNING_CACHE_INTERVAL_MS. Warnings are suppressed during the
+// startup grace period, since boot-time allocation churn (WiFi, TLS, NTP,
+// web server init) can temporarily look like high fragmentation.
 void checkHeapWarnings() {
-    if (millis() - _bootMillis < HEAPMONITOR_WARNING_STARTUP_GRACE_MS) {
+    unsigned long now_ = millis();
+
+    if (now_ - _bootMillis < HEAPMONITOR_WARNING_STARTUP_GRACE_MS) {
         return;
     }
+
+    if (_lastSampleMillis != 0 && (now_ - _lastSampleMillis) < HEAPMONITOR_SAMPLE_INTERVAL_MS) {
+        return;
+    }
+    _lastSampleMillis = now_;
 
     uint32_t freeHeap_, minFreeHeap_, largestBlock_;
     int32_t deltaSinceBoot_;
     uint8_t fragmentation_ = computeHeapMetrics(freeHeap_, minFreeHeap_, largestBlock_, deltaSinceBoot_);
 
-    unsigned long now_ = millis();
-
-    if (freeHeap_ < _freeHeapWarnThreshold) {
-        bool streamDue_ = (_lastFreeHeapStreamWarnMillis == 0) ||
-            (now_ - _lastFreeHeapStreamWarnMillis) >= HEAPMONITOR_WARNING_STREAM_INTERVAL_MS;
-        bool cacheDue_ = (_lastFreeHeapCacheWarnMillis == 0) ||
-            (now_ - _lastFreeHeapCacheWarnMillis) >= HEAPMONITOR_WARNING_CACHE_INTERVAL_MS;
-
-        if (streamDue_) {
-            _lastFreeHeapStreamWarnMillis = now_;
-
-            char message_[64];
-            snprintf(message_, sizeof(message_), "Free heap below threshold: %u bytes", freeHeap_);
-
-            if (cacheDue_) {
-                _lastFreeHeapCacheWarnMillis = now_;
-                eventLogger.log(message_, EventLogger::Status::WARN);
-            }
-            else {
-                eventLogger.webPrintln(message_, EventLogger::Status::WARN);
-            }
-        }
+    if (updateHeapWarning(_freeHeapWarning, freeHeap_ < _freeHeapWarnThreshold, freeHeap_, false, now_)) {
+        char message_[80];
+        snprintf(message_, sizeof(message_), "Free heap below threshold: %lu bytes for %lus (min %lu)",
+            (unsigned long)freeHeap_,
+            (now_ - _freeHeapWarning.activeSinceMillis) / 1000UL,
+            (unsigned long)_freeHeapWarning.worstValue);
+        emitHeapWarning(_freeHeapWarning, message_, freeHeap_, now_);
     }
 
-    if (fragmentation_ > _fragmentationWarnThreshold) {
-        bool streamDue_ = (_lastFragmentationStreamWarnMillis == 0) ||
-            (now_ - _lastFragmentationStreamWarnMillis) >= HEAPMONITOR_WARNING_STREAM_INTERVAL_MS;
-        bool cacheDue_ = (_lastFragmentationCacheWarnMillis == 0) ||
-            (now_ - _lastFragmentationCacheWarnMillis) >= HEAPMONITOR_WARNING_CACHE_INTERVAL_MS;
-
-        if (streamDue_) {
-            _lastFragmentationStreamWarnMillis = now_;
-
-            char message_[64];
-            snprintf(message_, sizeof(message_), "Heap fragmentation reached %u%%", fragmentation_);
-
-            if (cacheDue_) {
-                _lastFragmentationCacheWarnMillis = now_;
-                eventLogger.log(message_, EventLogger::Status::WARN);
-            }
-            else {
-                eventLogger.webPrintln(message_, EventLogger::Status::WARN);
-            }
-        }
+    if (updateHeapWarning(_fragmentationWarning, fragmentation_ > _fragmentationWarnThreshold, fragmentation_, true, now_)) {
+        char message_[96];
+        snprintf(message_, sizeof(message_), "Heap fragmentation %u%% for %lus (peak %lu%%, largest block %lu bytes)",
+            fragmentation_,
+            (now_ - _fragmentationWarning.activeSinceMillis) / 1000UL,
+            (unsigned long)_fragmentationWarning.worstValue,
+            (unsigned long)largestBlock_);
+        emitHeapWarning(_fragmentationWarning, message_, fragmentation_, now_);
     }
 }
 

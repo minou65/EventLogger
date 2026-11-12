@@ -17,8 +17,10 @@ void beginHeapMonitor();
 void printHeapReport();
 
 // Configures the warning thresholds used by checkHeapWarnings().
-// freeHeapBytes_: emit a warning when the free heap falls below this value.
-// fragmentationPercent_: emit a warning when fragmentation exceeds this value (0-100).
+// freeHeapBytes_: emit a warning when the free heap stays below this value.
+// fragmentationPercent_: emit a warning when fragmentation stays above this value (0-100).
+// A threshold must be exceeded continuously for HEAPMONITOR_WARNING_SUSTAIN_MS
+// (default 30 s) before a warning is raised.
 void setHeapWarningThresholds(uint32_t freeHeapBytes_, uint8_t fragmentationPercent_);
 
 #endif
