@@ -94,6 +94,9 @@ public:
     // Number of events in buffer
     size_t count() const;
 
+    // Number of events overwritten since construction or the last clear
+    uint32_t getLostEventCount() const;
+
     // Formatted output of an event
     String formatEvent(const Event& event) const;
 
@@ -120,6 +123,7 @@ private:
     Event _buffer[EVENT_BUFFER_SIZE];
     size_t _head;
     size_t _count;
+    uint32_t _lostEventCount;
     mutable portMUX_TYPE _bufferMux = portMUX_INITIALIZER_UNLOCKED;
 
     std::function<void(const Event&)> _liveCallback;

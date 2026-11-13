@@ -151,10 +151,14 @@ WEB_LOG_WARN_AT(1, "Signal strength: %d", rssi);
 ```cpp
 std::vector<EventLogger::Event> getEvents() const;
 size_t count() const;
+uint32_t getLostEventCount() const;
 void clear();
 ```
 
 `getEvents()` returns a copy of the stored events ordered from oldest to newest.
+`getLostEventCount()` reports how many events have been overwritten because the
+buffer was full since construction or the last call to `clear()`. Calling
+`clear()` resets both the buffer and this counter.
 
 Each event contains:
 

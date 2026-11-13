@@ -10,6 +10,7 @@ EventLogger eventLogger;
 EventLogger::EventLogger()
     : _head(0)
     , _count(0)
+    , _lostEventCount(0)
     , _liveCallback(nullptr)
     , _commandCallback(nullptr)
 #if EVENTLOGGER_HAS_ASYNC_WEB
@@ -49,6 +50,8 @@ void EventLogger::log(const String& message, Status status, uint8_t indent) {
     _head = (_head + 1) % EVENT_BUFFER_SIZE;
     if (_count < EVENT_BUFFER_SIZE) {
         _count++;
+    } else {
+        _lostEventCount++;
     }
     portEXIT_CRITICAL(&_bufferMux);
 
@@ -135,12 +138,22 @@ void EventLogger::clearLiveCallback() {
 }
 
 void EventLogger::clear() {
+    portENTER_CRITICAL(&_bufferMux);
     _head = 0;
     _count = 0;
+    _lostEventCount = 0;
+    portEXIT_CRITICAL(&_bufferMux);
 }
 
 size_t EventLogger::count() const {
     return _count;
+}
+
+uint32_t EventLogger::getLostEventCount() const {
+    portENTER_CRITICAL(&_bufferMux);
+    uint32_t lostEventCount_ = _lostEventCount;
+    portEXIT_CRITICAL(&_bufferMux);
+    return lostEventCount_;
 }
 
 String EventLogger::formatEvent(const Event& event) const {
