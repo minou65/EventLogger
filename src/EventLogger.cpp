@@ -11,6 +11,7 @@ EventLogger::EventLogger()
     : _head(0)
     , _count(0)
     , _lostEventCount(0)
+    , _enabledStatusMask(0x3F)
     , _liveCallback(nullptr)
     , _commandCallback(nullptr)
 #if EVENTLOGGER_HAS_ASYNC_WEB
@@ -25,6 +26,22 @@ EventLogger::EventLogger()
 {
 }
 
+bool EventLogger::setStatusEnabled(Status status, bool enabled) {
+    uint8_t statusBit_ = statusBit(status);
+    if (statusBit_ == 0) {
+        return false;
+    }
+
+    portENTER_CRITICAL(&_bufferMux);
+    if (enabled) {
+        _enabledStatusMask |= statusBit_;
+    } else {
+        _enabledStatusMask &= static_cast<uint8_t>(~statusBit_);
+    }
+    portEXIT_CRITICAL(&_bufferMux);
+    return true;
+}
+
 void EventLogger::log(const String& message) {
     log(message, Status::INFO, 0);
 }
@@ -34,6 +51,10 @@ void EventLogger::log(const String& message, Status status) {
 }
 
 void EventLogger::log(const String& message, Status status, uint8_t indent) {
+    if (!isStatusEnabled(status)) {
+        return;
+    }
+
     if (indent > MAX_INDENT_LEVEL) {
         indent = MAX_INDENT_LEVEL;
     }
@@ -77,6 +98,10 @@ void EventLogger::log(const String& message, Status status, uint8_t indent) {
 }
 
 void EventLogger::logf(const char* format, ...) {
+    if (!isStatusEnabled(Status::INFO)) {
+        return;
+    }
+
     char buffer_[256];
     va_list args_;
 
@@ -88,6 +113,10 @@ void EventLogger::logf(const char* format, ...) {
 }
 
 void EventLogger::logf(Status status, const char* format, ...) {
+    if (!isStatusEnabled(status)) {
+        return;
+    }
+
     char buffer_[256];
     va_list args_;
 
@@ -99,6 +128,10 @@ void EventLogger::logf(Status status, const char* format, ...) {
 }
 
 void EventLogger::logf(Status status, uint8_t indent, const char* format, ...) {
+    if (!isStatusEnabled(status)) {
+        return;
+    }
+
     char buffer_[256];
     va_list args_;
 
@@ -162,13 +195,38 @@ String EventLogger::formatEvent(const Event& event) const {
 
 const char* EventLogger::statusToText(Status status) {
     switch (status) {
-    case Status::OK:    return "OK";
-    case Status::WARN:  return "WARN";
-    case Status::INFO:  return "INFO";
-    case Status::DEBUG: return "DEBUG";
-    case Status::ERROR: return "ERROR";
-    default:            return "INFO";
+    case Status::OK:      return "OK";
+    case Status::WARN:    return "WARN";
+    case Status::INFO:    return "INFO";
+    case Status::DEBUG:   return "DEBUG";
+    case Status::ERROR:   return "ERROR";
+    case Status::VERBOSE: return "VERB";
+    default:              return "INFO";
     }
+}
+
+uint8_t EventLogger::statusBit(Status status) {
+    switch (status) {
+    case Status::OK:      return static_cast<uint8_t>(1U << 0);
+    case Status::WARN:    return static_cast<uint8_t>(1U << 1);
+    case Status::INFO:    return static_cast<uint8_t>(1U << 2);
+    case Status::DEBUG:   return static_cast<uint8_t>(1U << 3);
+    case Status::ERROR:   return static_cast<uint8_t>(1U << 4);
+    case Status::VERBOSE: return static_cast<uint8_t>(1U << 5);
+    default:              return 0;
+    }
+}
+
+bool EventLogger::isStatusEnabled(Status status) const {
+    uint8_t statusBit_ = statusBit(status);
+    if (statusBit_ == 0) {
+        return false;
+    }
+
+    portENTER_CRITICAL(&_bufferMux);
+    bool enabled_ = (_enabledStatusMask & statusBit_) != 0;
+    portEXIT_CRITICAL(&_bufferMux);
+    return enabled_;
 }
 
 String EventLogger::formatStatusTag(Status status) const {
@@ -253,7 +311,7 @@ bool EventLogger::processWebCommand(const String& command) {
 
 void EventLogger::webPrint(const String& message, Status status, uint8_t indent) {
 #if EVENTLOGGER_HAS_ASYNC_WEB
-    if (_webInitialized) {
+    if (_webInitialized && isStatusEnabled(status)) {
         unsigned long timestamp_ = millis();
         time_t now_;
         time(&now_);
@@ -277,6 +335,10 @@ void EventLogger::webPrintln() {
 }
 
 void EventLogger::webPrintf(const char* format, ...) {
+    if (!isStatusEnabled(Status::INFO)) {
+        return;
+    }
+
     char buffer_[256];
     va_list args_;
 
@@ -288,6 +350,10 @@ void EventLogger::webPrintf(const char* format, ...) {
 }
 
 void EventLogger::webPrintf(Status status, const char* format, ...) {
+    if (!isStatusEnabled(status)) {
+        return;
+    }
+
     char buffer_[256];
     va_list args_;
 
@@ -299,6 +365,10 @@ void EventLogger::webPrintf(Status status, const char* format, ...) {
 }
 
 void EventLogger::webPrintf(Status status, uint8_t indent, const char* format, ...) {
+    if (!isStatusEnabled(status)) {
+        return;
+    }
+
     char buffer_[256];
     va_list args_;
 
@@ -457,6 +527,8 @@ body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; }
   padding: 10px;
   border-bottom: 1px solid #ccc;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   position: sticky;
   top: 0;
@@ -471,6 +543,14 @@ body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; }
   font-family: inherit;
   background: #fff;
   color: #111;
+}
+
+#statusFilters {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 button { background: #2d6cdf; color: #fff; border: 0; padding: 8px 12px; cursor: pointer; }
@@ -504,6 +584,7 @@ tr.status-ok td.col-status { color: #0a7a2f; font-weight: 600; }
 tr.status-warn td.col-status { color: #b26a00; font-weight: 600; }
 tr.status-error td.col-status { color: #b42318; font-weight: 700; }
 tr.status-debug td.col-status { color: #6b7280; }
+tr.status-verbose td.col-status { color: #6b7280; }
 </style>
 </head>
 <body>
@@ -512,6 +593,15 @@ tr.status-debug td.col-status { color: #6b7280; }
   <input id="cmd" type="text" placeholder="Enter command (e.g. help)">
   <button onclick="sendCmd()">Send</button>
   <button onclick="clearLog()">Clear View</button>
+  <div id="statusFilters" aria-label="Status filter">
+    <span>Show:</span>
+    <label><input type="checkbox" data-status="OK" checked> OK</label>
+    <label><input type="checkbox" data-status="WARN" checked> WARN</label>
+    <label><input type="checkbox" data-status="INFO"> INFO</label>
+    <label><input type="checkbox" data-status="DEBUG"> DEBUG</label>
+    <label><input type="checkbox" data-status="ERROR" checked> ERROR</label>
+    <label><input type="checkbox" data-status="VERB"> VERBOSE</label>
+  </div>
 </div>
 
 <div id="logWrap">
@@ -536,6 +626,14 @@ if (!logBody) {
 const cmd = document.getElementById('cmd');
 const topBar = document.getElementById('top');
 const backBtn = document.getElementById('backBtn');
+const statusFilters = document.getElementById('statusFilters');
+if (!statusFilters) {
+  throw new Error('Missing #statusFilters element');
+}
+const statusFilterInputs = Array.from(statusFilters.querySelectorAll('input[data-status]'));
+const visibleStatuses = new Set(statusFilterInputs
+  .filter((input) => input.checked)
+  .map((input) => input.dataset.status));
 let streamWarned = false;
 let autoFollow = true;
 
@@ -586,6 +684,26 @@ function updateStickyOffsets() {
 window.addEventListener('resize', updateStickyOffsets);
 updateStickyOffsets();
 
+function updateStatusVisibility() {
+  for (const row of logBody.querySelectorAll('tr[data-status]')) {
+    row.hidden = !visibleStatuses.has(row.dataset.status);
+  }
+}
+
+statusFilters.addEventListener('change', (event) => {
+  const input = event.target;
+  if (!input.matches || !input.matches('input[data-status]')) {
+    return;
+  }
+
+  if (input.checked) {
+    visibleStatuses.add(input.dataset.status);
+  } else {
+    visibleStatuses.delete(input.dataset.status);
+  }
+  updateStatusVisibility();
+});
+
 function appendRow(ts, status, message, rowClass) {
   const wasNearBottom = isNearBottom();
 
@@ -601,6 +719,10 @@ function appendRow(ts, status, message, rowClass) {
   const tdStatus = document.createElement('td');
   tdStatus.className = 'col-status';
   tdStatus.textContent = status || '';
+  if (status) {
+    tr.dataset.status = status;
+    tr.hidden = !visibleStatuses.has(status);
+  }
 
   const tdMsg = document.createElement('td');
   tdMsg.className = 'col-msg';
@@ -629,6 +751,7 @@ function parseAndAddLine(line) {
     else if (status === 'WARN') rowClass = 'status-warn';
     else if (status === 'ERROR') rowClass = 'status-error';
     else if (status === 'DEBUG') rowClass = 'status-debug';
+    else if (status === 'VERB') rowClass = 'status-verbose';
 
     appendRow(ts, status, msg, rowClass);
   } else {

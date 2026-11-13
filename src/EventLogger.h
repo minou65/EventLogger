@@ -44,7 +44,8 @@ public:
         WARN,
         INFO,
         DEBUG,
-        ERROR
+        ERROR,
+        VERBOSE
     };
 
     // Maximum supported indentation level for hierarchical logs
@@ -73,6 +74,9 @@ public:
     void log(const String& message);
     void log(const String& message, Status status);
     void log(const String& message, Status status, uint8_t indent);
+
+    // Enable or disable a status for buffered and live output
+    bool setStatusEnabled(Status status, bool enabled);
 
     // Add event with printf-style formatting
     void logf(const char* format, ...);
@@ -124,6 +128,7 @@ private:
     size_t _head;
     size_t _count;
     uint32_t _lostEventCount;
+    uint8_t _enabledStatusMask;
     mutable portMUX_TYPE _bufferMux = portMUX_INITIALIZER_UNLOCKED;
 
     std::function<void(const Event&)> _liveCallback;
@@ -133,6 +138,8 @@ private:
     bool isValidTime(time_t t) const;
     String formatStatusTag(Status status) const;
     static const char* statusToText(Status status);
+    static uint8_t statusBit(Status status);
+    bool isStatusEnabled(Status status) const;
     static String indentToSpaces(uint8_t indent);
 
     bool processWebCommand(const String& command);

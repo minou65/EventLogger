@@ -52,7 +52,7 @@ void loop() {
 }
 ```
 
-Every call to `log()` or `logf()` is written to `Serial` and added to the buffer. When the buffer is full, the oldest event is overwritten.
+Calls to `log()` and `logf()` with enabled statuses are written to `Serial` and added to the buffer. When the buffer is full, the oldest event is overwritten.
 
 ## ESP32 web console
 
@@ -112,9 +112,21 @@ void log(const String& message);
 void logf(const char* format, ...);
 void logf(Status status, const char* format, ...);
 void logf(Status status, uint8_t indent, const char* format, ...);
+bool setStatusEnabled(Status status, bool enabled);
 ```
 
 `logf()` uses the same formatting rules as `printf`. The first overload logs with `INFO` status and indentation level `0`; the other overloads let you specify a status and, optionally, an indentation level. Formatted messages are stored as events and are limited to 95 characters; longer messages are truncated.
+
+All statuses are enabled by default. `setStatusEnabled()` enables or disables an individual status; disabled statuses are discarded before they reach the ring buffer, serial output, live callback, or web stream. It returns `false` for an invalid status. For example:
+
+```cpp
+eventLogger.setStatusEnabled(EventLogger::Status::VERBOSE, false);
+eventLogger.setStatusEnabled(EventLogger::Status::DEBUG, false);
+eventLogger.setStatusEnabled(EventLogger::Status::WARN, false);
+```
+
+`Status::VERBOSE` is supported and appears as `VERB` in the fixed-width log output.
+The web console has separate status checkboxes that only hide or show rows in the current browser view; they do not change the ring buffer or logger settings.
 
 #### Indentation levels
 
