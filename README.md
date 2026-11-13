@@ -117,6 +117,20 @@ bool setStatusEnabled(Status status, bool enabled);
 
 `logf()` uses the same formatting rules as `printf`. The first overload logs with `INFO` status and indentation level `0`; the other overloads let you specify a status and, optionally, an indentation level. Formatted messages are stored as events and are limited to 95 characters; longer messages are truncated.
 
+An optional module tag can be stored separately from the message:
+
+```cpp
+static const char* TAG = "WiFi";
+
+LOGI(TAG, "Connected to %s", ssid);
+LOGW(TAG, "Weak signal: %d dBm", rssi);
+LOGE(TAG, "Connection failed: %d", error);
+LOGD(TAG, "Retry %u", retries);
+LOGV(TAG, "Received packet");
+```
+
+These macros follow the `ESP_LOGx(TAG, ...)` calling convention. Tags are retained as a separate event field, shown in serial and web output, and can be filtered in the web console. The tag is limited to 15 characters and is truncated if longer. Existing calls without a tag remain supported.
+
 All statuses are enabled by default. `setStatusEnabled()` enables or disables an individual status; disabled statuses are discarded before they reach the ring buffer, serial output, live callback, or web stream. It returns `false` for an invalid status. For example:
 
 ```cpp
@@ -151,6 +165,8 @@ LOG_INFO_AT(1, "Connecting to Wi-Fi");
 LOG_WARN_AT(2, "Retry %d", retryCount);
 ```
 
+For ESP-IDF-style module tags, use `LOGI`, `LOGW`, `LOGE`, `LOGD`, and `LOGV` with a tag as the first argument, as shown above.
+
 The matching `WEB_LOG_*` and `WEB_LOG_*_AT` macros stream output to connected web clients without adding events to the buffer:
 
 ```cpp
@@ -180,6 +196,7 @@ struct Event {
     time_t realTime;
     Status status;
     uint8_t indent;
+    char tag[16];
     char message[96];
 };
 ```

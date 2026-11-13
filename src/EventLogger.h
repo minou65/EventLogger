@@ -50,19 +50,24 @@ public:
 
     // Maximum supported indentation level for hierarchical logs
     static const uint8_t MAX_INDENT_LEVEL = 4;
+    static const uint8_t MAX_TAG_LENGTH = 15;
 
     struct Event {
         unsigned long timestamp;
         time_t realTime;  // Real-time clock (Unix timestamp)
         Status status;
         uint8_t indent;   // Indentation level (0-4) for hierarchical logs
+        char tag[MAX_TAG_LENGTH + 1];
         char message[96]; // Feste Gr��e statt String -> keine Heap-Allokation mehr
 
         Event() : timestamp(0), realTime(0), status(Status::INFO), indent(0) {
+            tag[0] = '\0';
             message[0] = '\0';
         }
-        Event(unsigned long ts, time_t rt, const String& msg, Status st = Status::INFO, uint8_t ind = 0)
+        Event(unsigned long ts, time_t rt, const String& msg, Status st = Status::INFO, uint8_t ind = 0, const char* eventTag = "")
             : timestamp(ts), realTime(rt), status(st), indent(ind) {
+            strncpy(tag, eventTag == nullptr ? "" : eventTag, sizeof(tag) - 1);
+            tag[sizeof(tag) - 1] = '\0';
             strncpy(message, msg.c_str(), sizeof(message) - 1);
             message[sizeof(message) - 1] = '\0';
         }
@@ -74,6 +79,7 @@ public:
     void log(const String& message);
     void log(const String& message, Status status);
     void log(const String& message, Status status, uint8_t indent);
+    void log(const char* tag, const String& message, Status status = Status::INFO, uint8_t indent = 0);
 
     // Enable or disable a status for buffered and live output
     bool setStatusEnabled(Status status, bool enabled);
@@ -82,6 +88,9 @@ public:
     void logf(const char* format, ...);
     void logf(Status status, const char* format, ...);
     void logf(Status status, uint8_t indent, const char* format, ...);
+    void logfTagged(const char* tag, const char* format, ...);
+    void logfTagged(Status status, const char* tag, const char* format, ...);
+    void logfTagged(Status status, uint8_t indent, const char* tag, const char* format, ...);
 
     // Get all events from buffer (oldest first)
     std::vector<Event> getEvents() const;
@@ -136,6 +145,7 @@ private:
 
     String formatTimestamp(unsigned long timestamp, time_t realTime) const;
     bool isValidTime(time_t t) const;
+    void logWithTag(const char* tag, const String& message, Status status, uint8_t indent);
     String formatStatusTag(Status status) const;
     static const char* statusToText(Status status);
     static uint8_t statusBit(Status status);
@@ -194,6 +204,27 @@ extern EventLogger eventLogger;
 
 #ifndef LOG_DEBUG
 #define LOG_DEBUG(format, ...) eventLogger.logf(EventLogger::Status::DEBUG, format, ##__VA_ARGS__)
+#endif
+
+// ESP_LOGx-style macros with an explicit module tag.
+#ifndef LOGI
+#define LOGI(tag, format, ...) eventLogger.logfTagged(EventLogger::Status::INFO, tag, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOGW
+#define LOGW(tag, format, ...) eventLogger.logfTagged(EventLogger::Status::WARN, tag, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOGE
+#define LOGE(tag, format, ...) eventLogger.logfTagged(EventLogger::Status::ERROR, tag, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOGD
+#define LOGD(tag, format, ...) eventLogger.logfTagged(EventLogger::Status::DEBUG, tag, format, ##__VA_ARGS__)
+#endif
+
+#ifndef LOGV
+#define LOGV(tag, format, ...) eventLogger.logfTagged(EventLogger::Status::VERBOSE, tag, format, ##__VA_ARGS__)
 #endif
 
 // -----------------------------------------------------------------------

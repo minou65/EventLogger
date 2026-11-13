@@ -43,14 +43,22 @@ bool EventLogger::setStatusEnabled(Status status, bool enabled) {
 }
 
 void EventLogger::log(const String& message) {
-    log(message, Status::INFO, 0);
+    logWithTag("", message, Status::INFO, 0);
 }
 
 void EventLogger::log(const String& message, Status status) {
-    log(message, status, 0);
+    logWithTag("", message, status, 0);
 }
 
 void EventLogger::log(const String& message, Status status, uint8_t indent) {
+    logWithTag("", message, status, indent);
+}
+
+void EventLogger::log(const char* tag, const String& message, Status status, uint8_t indent) {
+    logWithTag(tag, message, status, indent);
+}
+
+void EventLogger::logWithTag(const char* tag, const String& message, Status status, uint8_t indent) {
     if (!isStatusEnabled(status)) {
         return;
     }
@@ -63,7 +71,7 @@ void EventLogger::log(const String& message, Status status, uint8_t indent) {
     time_t now_;
     time(&now_);
 
-    Event event_(timestamp_, now_, message, status, indent);
+    Event event_(timestamp_, now_, message, status, indent, tag);
 
     // First store in buffer
     portENTER_CRITICAL(&_bufferMux);
@@ -82,6 +90,11 @@ void EventLogger::log(const String& message, Status status, uint8_t indent) {
         Serial.print(" ");
         Serial.print(formatStatusTag(status));
         Serial.print(" ");
+        if (event_.tag[0] != '\0') {
+            Serial.print("[");
+            Serial.print(event_.tag);
+            Serial.print("] ");
+        }
         Serial.print(indentToSpaces(indent));
         Serial.println(message);
     }
@@ -142,6 +155,51 @@ void EventLogger::logf(Status status, uint8_t indent, const char* format, ...) {
     log(String(buffer_), status, indent);
 }
 
+void EventLogger::logfTagged(const char* tag, const char* format, ...) {
+    if (!isStatusEnabled(Status::INFO)) {
+        return;
+    }
+
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    logWithTag(tag, String(buffer_), Status::INFO, 0);
+}
+
+void EventLogger::logfTagged(Status status, const char* tag, const char* format, ...) {
+    if (!isStatusEnabled(status)) {
+        return;
+    }
+
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    logWithTag(tag, String(buffer_), status, 0);
+}
+
+void EventLogger::logfTagged(Status status, uint8_t indent, const char* tag, const char* format, ...) {
+    if (!isStatusEnabled(status)) {
+        return;
+    }
+
+    char buffer_[256];
+    va_list args_;
+
+    va_start(args_, format);
+    vsnprintf(buffer_, sizeof(buffer_), format, args_);
+    va_end(args_);
+
+    logWithTag(tag, String(buffer_), status, indent);
+}
+
 std::vector<EventLogger::Event> EventLogger::getEvents() const {
     std::vector<Event> events_;
     events_.reserve(_count);
@@ -190,7 +248,15 @@ uint32_t EventLogger::getLostEventCount() const {
 }
 
 String EventLogger::formatEvent(const Event& event) const {
-    return formatTimestamp(event.timestamp, event.realTime) + " " + formatStatusTag(event.status) + " " + indentToSpaces(event.indent) + event.message;
+    String line_ = formatTimestamp(event.timestamp, event.realTime) + " " + formatStatusTag(event.status) + " ";
+    if (event.tag[0] != '\0') {
+        line_ += "[";
+        line_ += event.tag;
+        line_ += "] ";
+    }
+    line_ += indentToSpaces(event.indent);
+    line_ += event.message;
+    return line_;
 }
 
 const char* EventLogger::statusToText(Status status) {
@@ -577,6 +643,7 @@ button:hover { background: #2458b8; }
 
 .col-ts { width: 190px; white-space: nowrap; }
 .col-status { width: 80px; white-space: nowrap; }
+.col-tag { width: 140px; white-space: nowrap; }
 .col-msg { width: auto; word-break: break-word; white-space: pre-wrap; }
 
 tr.meta td { font-style: italic; opacity: 0.85; border-bottom: 0; }
@@ -602,6 +669,10 @@ tr.status-verbose td.col-status { color: #6b7280; }
     <label><input type="checkbox" data-status="ERROR" checked> ERROR</label>
     <label><input type="checkbox" data-status="VERB"> VERBOSE</label>
   </div>
+  <label for="tagFilter">Tag:</label>
+  <select id="tagFilter" aria-label="Filter by tag">
+    <option value="">All tags</option>
+  </select>
 </div>
 
 <div id="logWrap">
@@ -610,6 +681,7 @@ tr.status-verbose td.col-status { color: #6b7280; }
       <tr>
         <th class="col-ts">Timestamp</th>
         <th class="col-status">Status</th>
+        <th class="col-tag">Tag</th>
         <th class="col-msg">Message</th>
       </tr>
     </thead>
@@ -630,10 +702,16 @@ const statusFilters = document.getElementById('statusFilters');
 if (!statusFilters) {
   throw new Error('Missing #statusFilters element');
 }
+const tagFilter = document.getElementById('tagFilter');
+if (!tagFilter) {
+  throw new Error('Missing #tagFilter element');
+}
 const statusFilterInputs = Array.from(statusFilters.querySelectorAll('input[data-status]'));
 const visibleStatuses = new Set(statusFilterInputs
   .filter((input) => input.checked)
   .map((input) => input.dataset.status));
+const knownTags = new Set();
+let selectedTag = '';
 let streamWarned = false;
 let autoFollow = true;
 
@@ -684,10 +762,24 @@ function updateStickyOffsets() {
 window.addEventListener('resize', updateStickyOffsets);
 updateStickyOffsets();
 
-function updateStatusVisibility() {
+function updateEventVisibility() {
   for (const row of logBody.querySelectorAll('tr[data-status]')) {
-    row.hidden = !visibleStatuses.has(row.dataset.status);
+    const statusVisible = visibleStatuses.has(row.dataset.status);
+    const tagVisible = !selectedTag || row.dataset.tag === selectedTag;
+    row.hidden = !statusVisible || !tagVisible;
   }
+}
+
+function addTagOption(tag) {
+  if (!tag || knownTags.has(tag)) {
+    return;
+  }
+
+  knownTags.add(tag);
+  const option = document.createElement('option');
+  option.value = tag;
+  option.textContent = tag;
+  tagFilter.appendChild(option);
 }
 
 statusFilters.addEventListener('change', (event) => {
@@ -701,10 +793,15 @@ statusFilters.addEventListener('change', (event) => {
   } else {
     visibleStatuses.delete(input.dataset.status);
   }
-  updateStatusVisibility();
+  updateEventVisibility();
 });
 
-function appendRow(ts, status, message, rowClass) {
+tagFilter.addEventListener('change', () => {
+  selectedTag = tagFilter.value;
+  updateEventVisibility();
+});
+
+function appendRow(ts, status, tag, message, rowClass) {
   const wasNearBottom = isNearBottom();
 
   const tr = document.createElement('tr');
@@ -721,8 +818,14 @@ function appendRow(ts, status, message, rowClass) {
   tdStatus.textContent = status || '';
   if (status) {
     tr.dataset.status = status;
-    tr.hidden = !visibleStatuses.has(status);
+    tr.dataset.tag = tag || '';
+    addTagOption(tag);
+    tr.hidden = !visibleStatuses.has(status) || (selectedTag && tag !== selectedTag);
   }
+
+  const tdTag = document.createElement('td');
+  tdTag.className = 'col-tag';
+  tdTag.textContent = tag || '';
 
   const tdMsg = document.createElement('td');
   tdMsg.className = 'col-msg';
@@ -730,6 +833,7 @@ function appendRow(ts, status, message, rowClass) {
 
   tr.appendChild(tdTs);
   tr.appendChild(tdStatus);
+  tr.appendChild(tdTag);
   tr.appendChild(tdMsg);
   logBody.appendChild(tr);
 
@@ -740,11 +844,12 @@ function appendRow(ts, status, message, rowClass) {
 }
 
 function parseAndAddLine(line) {
-  const m = line.match(/^\[(.*?)\]\s\[([A-Z ]{5})\]\s(.*)$/);
+  const m = line.match(/^\[(.*?)\]\s\[([A-Z ]{5})\](?:\s\[([^\]]*)\])?\s(.*)$/);
   if (m) {
     const ts = m[1];
     const status = m[2].trim();
-    const msg = m[3];
+    const tag = m[3] || '';
+    const msg = m[4];
 
     let rowClass = '';
     if (status === 'OK') rowClass = 'status-ok';
@@ -753,14 +858,14 @@ function parseAndAddLine(line) {
     else if (status === 'DEBUG') rowClass = 'status-debug';
     else if (status === 'VERB') rowClass = 'status-verbose';
 
-    appendRow(ts, status, msg, rowClass);
+    appendRow(ts, status, tag, msg, rowClass);
   } else {
-    appendRow('', '', line, 'meta');
+    appendRow('', '', '', line, 'meta');
   }
 }
 
 function addMetaLine(line) {
-  appendRow('', '', line, 'meta');
+  appendRow('', '', '', line, 'meta');
 }
 
 function clearLog() {
