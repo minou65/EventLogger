@@ -93,14 +93,14 @@ void loop() {
 }
 ```
 
-By default, the console is served at `/webserial`. The `basePath` argument can change this path; for example, `beginWeb(&server, "/events")` serves the console at `/events`.
+By default, the console is served at `/events`. The `basePath` argument can change this path; for example, `beginWeb(&server, "/events")` serves the console at `/events`.
 
 | Endpoint | Method | Behavior |
 | --- | --- | --- |
-| `/webserial` | GET | Browser console showing buffered history and live events |
-| `/webserial/history` | GET | Buffered events as a JSON array of formatted strings, oldest first |
-| `/webserial/stream` | GET | Server-sent event stream for new log entries and web output |
-| `/webserial/command` | POST | Sends the request body (or a `cmd` parameter) to the command callback |
+| `/events` | GET | Browser console showing buffered history and live events |
+| `/events/history` | GET | Buffered events as a JSON array of formatted strings, oldest first |
+| `/events/stream` | GET | Server-sent event stream for new log entries and web output |
+| `/events/command` | POST | Sends the request body (or a `cmd` parameter) to the command callback |
 
 The command callback runs synchronously. Incoming commands are trimmed and also recorded as `WebCommand: ...`. A command request returns HTTP 200 when a callback is registered and invoked, otherwise HTTP 400. `webPrint()` and `webPrintln()` each send one text entry to connected browser clients; neither adds it to the event buffer. `webClientCount()` reports the number of connected stream clients.
 
@@ -228,7 +228,7 @@ The callback runs synchronously from `log()`, so keep it short and avoid blockin
 ### Web console and commands
 
 ```cpp
-bool beginWeb(AsyncWebServer* server, const String& basePath = "/webserial");
+bool beginWeb(AsyncWebServer* server, const String& basePath = "/events");
 void setCommandCallback(std::function<void(const String&)> callback);
 void clearCommandCallback();
 void webPrint(const String& message);

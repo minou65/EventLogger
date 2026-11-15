@@ -562,7 +562,7 @@ bool EventLogger::beginWeb(AsyncWebServer* server, const String& basePath) {
     }
 
     _webServer = server;
-    _webBasePath = (basePath.length() == 0) ? "/webserial" : basePath;
+    _webBasePath = (basePath.length() == 0) ? "/events" : basePath;
     if (!_webBasePath.startsWith("/")) {
         _webBasePath = "/" + _webBasePath;
     }

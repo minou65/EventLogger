@@ -129,7 +129,7 @@ public:
     String formatEvent(const Event& event) const;
 
     // Optional web module (ESPAsyncWebServer)
-    bool beginWeb(AsyncWebServer* server, const String& basePath = "/webserial");
+    bool beginWeb(AsyncWebServer* server, const String& basePath = "/events");
     void loop(); // reserved for API compatibility
 
     // Incoming web command callback
