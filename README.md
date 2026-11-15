@@ -5,6 +5,7 @@ A lightweight event logger for Arduino projects. `EventLogger` stores recent eve
 ## Features
 
 - Fixed-size ring buffer with configurable capacity
+- Optional ESP32 PSRAM-backed event storage with internal-RAM fallback
 - Events returned in chronological order, oldest first
 - Millisecond timestamps based on `millis()`
 - Optional real-time timestamps from the system clock
@@ -184,9 +185,9 @@ void clear();
 ```
 
 `getEvents()` returns a copy of the stored events ordered from oldest to newest.
-`getLostEventCount()` reports how many events have been overwritten because the
-buffer was full since construction or the last call to `clear()`. Calling
-`clear()` resets both the buffer and this counter.
+`getLostEventCount()` reports how many events were overwritten because the
+buffer was full or could not be allocated since construction or the last call
+to `clear()`. Calling `clear()` resets both the buffer and this counter.
 
 Each event contains:
 
@@ -281,7 +282,11 @@ Define `EVENT_BUFFER_SIZE` before including the header to change the default buf
 #include <EventLogger.h>
 ```
 
-The buffer is statically allocated, so increasing its size increases RAM usage. The library also uses `std::vector` and `std::function`; make sure your target platform and toolchain provide the required C++ standard library support.
+On ESP32, the event buffer uses PSRAM when `EVENTLOGGER_USE_PSRAM` is enabled (the default) and PSRAM is available. If PSRAM is unavailable or allocation fails, the logger falls back to internal RAM. Define `EVENTLOGGER_USE_PSRAM` as `0` before including the header to retain a statically allocated internal-RAM buffer. On other platforms, the buffer remains statically allocated.
+
+When PSRAM storage is enabled, `EventLogger` instances are non-copyable because each instance owns its allocated buffer.
+
+The library also uses `std::vector` and `std::function`; make sure your target platform and toolchain provide the required C++ standard library support.
 
 ## Timestamp requirements
 

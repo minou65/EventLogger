@@ -16,6 +16,15 @@
 #define EVENT_BUFFER_SIZE 100  // Default: Number of events in ring buffer
 #endif
 
+// Use PSRAM for the event buffer on ESP32 when available.
+#ifndef EVENTLOGGER_USE_PSRAM
+#if defined(ESP32)
+#define EVENTLOGGER_USE_PSRAM 1
+#else
+#define EVENTLOGGER_USE_PSRAM 0
+#endif
+#endif
+
 // Async Web support detection (optional dependency)
 #ifndef EVENTLOGGER_HAS_ASYNC_WEB
 #if defined(ESP32) && defined(__has_include)
@@ -58,7 +67,7 @@ public:
         Status status;
         uint8_t indent;   // Indentation level (0-4) for hierarchical logs
         char tag[MAX_TAG_LENGTH + 1];
-        char message[96]; // Feste Gr��e statt String -> keine Heap-Allokation mehr
+        char message[96]; // Fixed-size buffer avoids heap allocation from String
 
         Event() : timestamp(0), realTime(0), status(Status::INFO), indent(0) {
             tag[0] = '\0';
@@ -74,6 +83,12 @@ public:
     };
 
     EventLogger();
+    ~EventLogger();
+
+#if defined(ESP32) && EVENTLOGGER_USE_PSRAM
+    EventLogger(const EventLogger&) = delete;
+    EventLogger& operator=(const EventLogger&) = delete;
+#endif
 
     // Add event (backward compatible: defaults to INFO)
     void log(const String& message);
@@ -107,7 +122,7 @@ public:
     // Number of events in buffer
     size_t count() const;
 
-    // Number of events overwritten since construction or the last clear
+    // Number of events lost because the buffer was full or could not be allocated
     uint32_t getLostEventCount() const;
 
     // Formatted output of an event
@@ -133,10 +148,17 @@ public:
     size_t webClientCount() const;
 
 private:
-    Event _buffer[EVENT_BUFFER_SIZE];
+    Event* _buffer;
+    bool _bufferUsesHeap;
+#if !defined(ESP32) || !EVENTLOGGER_USE_PSRAM
+    Event _bufferStorage[EVENT_BUFFER_SIZE];
+#else
+    bool ensureBuffer();
+#endif
     size_t _head;
     size_t _count;
     uint32_t _lostEventCount;
+    bool _bufferAllocationErrorReported;
     uint8_t _enabledStatusMask;
     mutable portMUX_TYPE _bufferMux = portMUX_INITIALIZER_UNLOCKED;
 

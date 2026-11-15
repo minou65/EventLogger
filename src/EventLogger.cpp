@@ -3,14 +3,27 @@
 #include "EventLogger.h"
 #include <stdarg.h>
 #include <time.h>
+#if defined(ESP32) && EVENTLOGGER_USE_PSRAM
+#include <esp32-hal-psram.h>
+#include <esp_heap_caps.h>
+#include <new>
+#endif
 
 // Global instance
 EventLogger eventLogger;
 
 EventLogger::EventLogger()
-    : _head(0)
+#if defined(ESP32) && EVENTLOGGER_USE_PSRAM
+    : _buffer(nullptr)
+    , _bufferUsesHeap(false)
+#else
+    : _buffer(_bufferStorage)
+    , _bufferUsesHeap(false)
+#endif
+    , _head(0)
     , _count(0)
     , _lostEventCount(0)
+    , _bufferAllocationErrorReported(false)
     , _enabledStatusMask(0x3F)
     , _liveCallback(nullptr)
     , _commandCallback(nullptr)
@@ -25,6 +38,73 @@ EventLogger::EventLogger()
 #endif
 {
 }
+
+EventLogger::~EventLogger() {
+#if defined(ESP32) && EVENTLOGGER_USE_PSRAM
+    if (_bufferUsesHeap) {
+        heap_caps_free(_buffer);
+    }
+#endif
+}
+
+#if defined(ESP32) && EVENTLOGGER_USE_PSRAM
+bool EventLogger::ensureBuffer() {
+    portENTER_CRITICAL(&_bufferMux);
+    bool initialized_ = _buffer != nullptr;
+    portEXIT_CRITICAL(&_bufferMux);
+    if (initialized_) {
+        return true;
+    }
+
+    size_t bufferSize_ = sizeof(Event) * EVENT_BUFFER_SIZE;
+    Event* candidate_ = nullptr;
+    if (psramFound()) {
+        candidate_ = static_cast<Event*>(
+            heap_caps_malloc(bufferSize_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+    if (candidate_ == nullptr) {
+        candidate_ = static_cast<Event*>(
+            heap_caps_malloc(bufferSize_, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    }
+    if (candidate_ == nullptr) {
+        bool initializedAfterFailure_ = false;
+        bool reportFailure_ = false;
+        bool serialReady_ = Serial;
+        portENTER_CRITICAL(&_bufferMux);
+        initializedAfterFailure_ = _buffer != nullptr;
+        if (!initializedAfterFailure_ && serialReady_ && !_bufferAllocationErrorReported) {
+            _bufferAllocationErrorReported = true;
+            reportFailure_ = true;
+        }
+        portEXIT_CRITICAL(&_bufferMux);
+        if (reportFailure_) {
+            Serial.println("EventLogger: failed to allocate event buffer");
+        }
+        if (initializedAfterFailure_) {
+            return true;
+        }
+        return false;
+    }
+
+    for (size_t i_ = 0; i_ < EVENT_BUFFER_SIZE; ++i_) {
+        new (&candidate_[i_]) Event();
+    }
+
+    bool adopted_ = false;
+    portENTER_CRITICAL(&_bufferMux);
+    if (_buffer == nullptr) {
+        _buffer = candidate_;
+        _bufferUsesHeap = true;
+        adopted_ = true;
+    }
+    portEXIT_CRITICAL(&_bufferMux);
+
+    if (!adopted_) {
+        heap_caps_free(candidate_);
+    }
+    return true;
+}
+#endif
 
 bool EventLogger::setStatusEnabled(Status status, bool enabled) {
     uint8_t statusBit_ = statusBit(status);
@@ -63,6 +143,10 @@ void EventLogger::logWithTag(const char* tag, const String& message, Status stat
         return;
     }
 
+#if defined(ESP32) && EVENTLOGGER_USE_PSRAM
+    ensureBuffer();
+#endif
+
     if (indent > MAX_INDENT_LEVEL) {
         indent = MAX_INDENT_LEVEL;
     }
@@ -75,10 +159,14 @@ void EventLogger::logWithTag(const char* tag, const String& message, Status stat
 
     // First store in buffer
     portENTER_CRITICAL(&_bufferMux);
-    _buffer[_head] = event_;
-    _head = (_head + 1) % EVENT_BUFFER_SIZE;
-    if (_count < EVENT_BUFFER_SIZE) {
-        _count++;
+    if (_buffer != nullptr) {
+        _buffer[_head] = event_;
+        _head = (_head + 1) % EVENT_BUFFER_SIZE;
+        if (_count < EVENT_BUFFER_SIZE) {
+            _count++;
+        } else {
+            _lostEventCount++;
+        }
     } else {
         _lostEventCount++;
     }
@@ -202,19 +290,24 @@ void EventLogger::logfTagged(Status status, uint8_t indent, const char* tag, con
 
 std::vector<EventLogger::Event> EventLogger::getEvents() const {
     std::vector<Event> events_;
-    events_.reserve(_count);
+    portENTER_CRITICAL(&_bufferMux);
+    Event* buffer_ = _buffer;
+    size_t count_ = _count;
+    size_t head_ = _head;
+    portEXIT_CRITICAL(&_bufferMux);
 
-    if (_count == 0) {
+    events_.reserve(count_);
+    if (buffer_ == nullptr || count_ == 0) {
         return events_;
     }
 
     // Calculate start position (oldest event)
-    size_t start_ = (_count < EVENT_BUFFER_SIZE) ? 0 : _head;
+    size_t start_ = (count_ < EVENT_BUFFER_SIZE) ? 0 : head_;
 
     // Add events in chronological order
-    for (size_t i_ = 0; i_ < _count; i_++) {
+    for (size_t i_ = 0; i_ < count_; i_++) {
         size_t index_ = (start_ + i_) % EVENT_BUFFER_SIZE;
-        events_.push_back(_buffer[index_]);
+        events_.push_back(buffer_[index_]);
     }
 
     return events_;
@@ -502,24 +595,30 @@ bool EventLogger::beginWeb(AsyncWebServer* server, const String& basePath) {
 
 #if EVENTLOGGER_HAS_ASYNC_WEB
 void EventLogger::setupWebRoutes() {
-    // 1) Spezifische Endpunkte zuerst
+    // 1) Register specific endpoints first
     _webServer->on(_webHistoryPath.c_str(), HTTP_GET, [this](AsyncWebServerRequest* request) {
         String json_;
-        json_.reserve(_count * 48 + 8); // grobe Schätzung, vermeidet mehrfaches Reallozieren
+        portENTER_CRITICAL(&_bufferMux);
+        Event* buffer_ = _buffer;
+        size_t count_ = _count;
+        size_t head_ = _head;
+        portEXIT_CRITICAL(&_bufferMux);
+
+        json_.reserve(count_ * 48 + 8);
 
         json_ += "[";
 
-        if (_count > 0) {
-            size_t start_ = (_count < EVENT_BUFFER_SIZE) ? 0 : _head;
+        if (buffer_ != nullptr && count_ > 0) {
+            size_t start_ = (count_ < EVENT_BUFFER_SIZE) ? 0 : head_;
 
-            for (size_t i_ = 0; i_ < _count; i_++) {
+            for (size_t i_ = 0; i_ < count_; i_++) {
                 if (i_ > 0) {
                     json_ += ",";
                 }
 
                 size_t index_ = (start_ + i_) % EVENT_BUFFER_SIZE;
                 json_ += "\"";
-                json_ += escapeJson(formatEvent(_buffer[index_]));
+                json_ += escapeJson(formatEvent(buffer_[index_]));
                 json_ += "\"";
             }
         }
@@ -575,7 +674,7 @@ void EventLogger::setupWebRoutes() {
         }
     );
 
-    // 2) UI-Root als letztes (wichtig)
+    // 2) Register the UI root last
     _webServer->on(_webBasePath.c_str(), HTTP_GET, [this](AsyncWebServerRequest* request) {
         static const char page_[] PROGMEM = R"HTML(
 <!doctype html>
@@ -599,7 +698,7 @@ body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; }
   position: sticky;
   top: 0;
   z-index: 1000;
-  background: #fff; /* wichtig: nicht transparent */
+  background: #fff; /* important: opaque background */
 }
 
 #cmd {
@@ -626,7 +725,7 @@ button:hover { background: #2458b8; }
 
 #logTable {
   width: 100%;
-  border-collapse: separate; /* stabiler für sticky */
+  border-collapse: separate; /* improves sticky positioning */
   border-spacing: 0;
   table-layout: fixed;
 }
@@ -635,8 +734,8 @@ button:hover { background: #2458b8; }
 
 #logTable th {
   position: sticky;
-  top: var(--top-h);   /* dynamisch statt fix 52px */
-  background: #fff;    /* wichtig: nicht transparent */
+  top: var(--top-h);   /* dynamic instead of fixed 52px */
+  background: #fff;    /* important: opaque background */
   text-align: left;
   z-index: 900;
 }

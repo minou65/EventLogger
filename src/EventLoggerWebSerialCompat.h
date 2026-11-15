@@ -25,11 +25,11 @@ private:
     void forwardCommand(const String& command);
 };
 
-// Globale kompatible Instanz
+// Global compatibility instance
 extern EventLoggerWebSerialCompat EventWebSerial;
 
-// Optional: Alias für bestehenden Code
-// Vor Include dieses Headers definieren:
+// Optional alias for existing code
+// Define before including this header:
 // #define EVENTLOGGER_DEFINE_WEBSERIAL_ALIAS
 #ifdef EVENTLOGGER_DEFINE_WEBSERIAL_ALIAS
 #define WebSerial EventWebSerial
