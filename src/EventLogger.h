@@ -39,6 +39,10 @@
 #endif
 
 #if EVENTLOGGER_HAS_ASYNC_WEB
+// Guard against http_parser conflicts with WebServer.h
+#ifndef _HTTP_PARSER_H_
+#define _HTTP_PARSER_H_
+#endif
 #include <ESPAsyncWebServer.h>
 #else
 class AsyncWebServer;
