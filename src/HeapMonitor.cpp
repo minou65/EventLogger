@@ -120,6 +120,10 @@ void printHeapReport() {
     uint32_t freeHeap_, minFreeHeap_, largestBlock_;
     int32_t deltaSinceBoot_;
     uint8_t fragmentation_ = computeHeapMetrics(freeHeap_, minFreeHeap_, largestBlock_, deltaSinceBoot_);
+    uint32_t freeInternal_ = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    uint32_t largestInternal_ = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    uint32_t freePsram_ = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    uint32_t largestPsram_ = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
 
     eventLogger.webPrintln("Heap Report");
     eventLogger.webPrintf(EventLogger::Status::INFO, 1, "Uptime:             %s", formatUptime().c_str());
@@ -128,6 +132,10 @@ void printHeapReport() {
     eventLogger.webPrintf(EventLogger::Status::INFO, 1, "Largest Block:      %u bytes", largestBlock_);
     eventLogger.webPrintf(EventLogger::Status::INFO, 1, "Fragmentation:      %u %%", fragmentation_);
     eventLogger.webPrintf(EventLogger::Status::INFO, 1, "Change Since Boot:  %ld bytes", deltaSinceBoot_);
+    eventLogger.webPrintf(EventLogger::Status::INFO, 1, "Internal SRAM Free: %u bytes", freeInternal_);
+    eventLogger.webPrintf(EventLogger::Status::INFO, 1, "Largest SRAM Block: %u bytes", largestInternal_);
+    eventLogger.webPrintf(EventLogger::Status::INFO, 1, "PSRAM Free:         %u bytes", freePsram_);
+    eventLogger.webPrintf(EventLogger::Status::INFO, 1, "Largest PSRAM Block: %u bytes", largestPsram_);
 
     // Also persist a compact summary in the event ring buffer so the report
     // remains traceable even without an active web client (webPrintln/webPrintf
@@ -141,6 +149,13 @@ void printHeapReport() {
         largestBlock_,
         fragmentation_,
         deltaSinceBoot_);
+    eventLogger.logf(
+        EventLogger::Status::INFO,
+        "Heap pools: SRAM free=%u largest=%u PSRAM free=%u largest=%u",
+        freeInternal_,
+        largestInternal_,
+        freePsram_,
+        largestPsram_);
 }
 
 void checkFreeHeapAtMidnight() {

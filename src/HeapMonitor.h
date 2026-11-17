@@ -13,7 +13,8 @@ void loopHeapMonitor();
 void beginHeapMonitor();
 
 // Prints a detailed heap report (uptime, free heap, min free heap,
-// largest free block, fragmentation, change since boot) via webPrintln.
+// largest free block, fragmentation, change since boot, and free and largest
+// blocks for internal SRAM and PSRAM) via the web console.
 void printHeapReport();
 
 // Configures the warning thresholds used by checkHeapWarnings().
